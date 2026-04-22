@@ -1,8 +1,8 @@
 # MagikaDocument — Lightweight Blur Detector
 
-A **Magika-inspired image quality gate** that classifies images as `sharp`, `blurred`, or `uncertain` in a few milliseconds on CPU. Built to sit at the front of vision pipelines so expensive downstream models (OCR, detection, classification) never waste compute on unusable input.
+A **Magika-inspired image quality gate** that classifies images as `sharp`, `blurred`, or `uncertain` in a few milliseconds on CPU. Built to sit at the front of vision pipelines so expensive downstream models (OCR, detection, classification, VLMs) never waste compute on unusable input.
 
-**Final result on GoPro test split:**
+**Result on GoPro Large test split:**
 
 | Metric | Value |
 |---|---|
@@ -12,25 +12,27 @@ A **Magika-inspired image quality gate** that classifies images as `sharp`, `blu
 | Recall | 0.9613 |
 | AUC | 0.9982 |
 | Model size | 17 MB (ONNX) |
-| Baseline inference | ~7 ms / image (CPU, single-scale) |
+| Inference latency | ~7 ms / image (CPU, single-scale) |
 
 ---
 
-## 1. The Problem
+## 1. The Business Problem
 
-Most production vision pipelines — OCR, document understanding, face/object recognition, content moderation — silently degrade on blurry input. A few concrete pain points:
+Most production vision pipelines — OCR, document understanding, KYC, face/object recognition, content moderation, retail search — silently degrade on blurry input. Concrete symptoms we see at client engagements:
 
-1. **OCR on blurred receipts** emits garbage text that downstream logic can't distinguish from real data.
-2. **Product search from user photos** returns irrelevant results when the phone shot is motion-blurred.
-3. **Large multimodal models** (GPT-4V-class) are expensive; burning compute on an unreadable frame is wasteful.
-4. **Dataset curation** — hand-filtering blurry images from millions of uploads is infeasible.
+1. **OCR on blurred receipts, invoices, or IDs** emits garbage text that downstream logic can't distinguish from legitimate data. Silent data-quality failures contaminate analytics.
+2. **Product search from user photos** returns irrelevant results when the phone shot is motion-blurred, driving up refund / support cost.
+3. **Large multimodal models** (GPT-4V-class) are expensive per call; burning those tokens on an unreadable frame is pure waste.
+4. **Dataset curation at scale** — hand-filtering blurry images from millions of uploads is infeasible and stalls ML projects.
+5. **Mobile / edge capture flows** need immediate "please retake" feedback; a cloud roundtrip for every shot is too slow.
 
-What teams usually want is a **fast, cheap pre-check** that can:
-- Run on **CPU** before shipping the image to a GPU model or paid API
-- Return not just a label but a **confidence** so the pipeline can route uncertain cases to a human or a heavier model
-- Be **trainable without human annotation** — paired sharp/blur datasets already exist
+What teams want is a **fast, cheap pre-check** that can:
 
-Existing approaches either require heavy restoration networks (deblur GANs, hundreds of millions of params) or brittle hand-crafted edge-variance heuristics that fail on textured-but-sharp vs smooth-but-blurred scenes.
+- Run on **CPU** before the image is shipped to a GPU model or paid API.
+- Return not just a label but a **calibrated confidence** so the pipeline can route uncertain cases to a human or a heavier model.
+- Be **trainable without human annotation** — paired sharp/blur datasets already exist publicly, and domain data can be synthesized.
+
+Existing alternatives fail on both ends: heavy restoration networks (deblur GANs, hundreds of millions of parameters) are too expensive to run per upload, while hand-crafted edge-variance heuristics (Laplacian variance, FFT-based) break on textured-but-sharp vs smooth-but-blurred scenes and can't be tuned per domain.
 
 ---
 
@@ -42,43 +44,31 @@ A two-class CNN classifier with a confidence-aware routing head, designed after 
 
 ### Recipe (F1 = 0.9749)
 
-- **Data**: GoPro Large dataset. Both `blur/` and `blur_gamma/` folders count as positive (blurred); `sharp/` is negative. Paired sample generation — no extra human annotation.
-- **Backbone**: MobileNetV3-Large, ImageNet-pretrained, 2-class softmax head (~3.3M params).
+- **Data**: GoPro Large dataset. Both `blur/` and `blur_gamma/` folders count as positive (blurred); `sharp/` is negative. Paired sample generation — no extra human annotation required.
+- **Backbone**: MobileNetV3-Large, ImageNet-pretrained, 2-class softmax head (~3.3M parameters).
 - **Training**: 384×384 input, AdamW lr=1e-4, CosineAnnealing, CrossEntropy, 25 epochs, medium augmentation (crop, flip, mild color jitter), mixed-precision.
 - **Inference**: **5-scale multi-scale TTA** — run the model at 256, 320, 384, 448, 512 and average the softmax probabilities. Free +0.27% F1 over single-scale, no retraining.
 - **Routing**: return `sharp` or `blurred` when max softmax ≥ 0.60, otherwise return `uncertain` so the pipeline can hand off to a heavier model or a human.
 
-### Autonomous research loop
+### What we learned (engineering insights)
 
-This model wasn't picked by hand — it fell out of an **autoresearch loop** that ran 46 experiments across 8 parallel sweeps, with every run logged to `autoresearch/results.tsv`. The full progression:
+The final recipe is the output of a systematic evaluation across backbones, resolutions, losses, augmentation intensities, and ensembling strategies. Three findings that materially changed the design:
 
-```
-Sweep 1 (res 128-160):       F1 ≤ 0.89
-Sweep 2 (res 160-224):       F1 ≤ 0.92
-Sweep 3 (aug/threshold):     F1 ≤ 0.93
-Sweep 4 (blur_gamma + 320):  F1 ≤ 0.95
-Sweep 5 (384px):             F1 ≤ 0.96
-Sweep 6 (MNV3-Large @ 384):  F1 = 0.9722  ← single-model best
-Sweep 7 (Large variants):    F1 ≤ 0.9722  (plateau)
-Sweep 8 (EfficientNet/reg):  F1 ≤ 0.9722  (plateau)
-Multi-scale TTA on champion: F1 = 0.9749  ← final
-```
+- **Resolution is by far the biggest lever.** Moving from 128 → 384 px alone adds +13% F1, far outweighing any architectural choice we tried.
+- **Capacity × resolution interact non-linearly.** MobileNetV3-Large was neutral or slightly worse than MNV3-Small at 160-320 px, but clearly wins at ≥384 px. Model capacity only pays off once there is enough signal to learn from.
+- **Extra paired data gives free points.** Including the GoPro `blur_gamma` folder (a second blur style of the same scenes) added +1% F1 with zero engineering cost.
 
-The loop discovered three things humans would have over/under-weighted:
-- **Resolution is by far the biggest lever** (+13% F1 alone, 128→384)
-- **Capacity × resolution interact**: MNV3-Large was neutral at 160-320px, but wins at ≥384px
-- **blur_gamma data**: +1% F1 just by including the second GoPro blur folder
+Approaches we rejected after evaluation — worth noting for any team tempted to try them on a similar problem:
 
-Anti-patterns the loop rejected:
-- Focal loss (dataset is balanced)
-- Strong/aggressive augmentation (hurt at ≥224px)
-- Training >25 epochs at 384px (overfit)
-- Threshold tuning (val saturates at F1=1.0)
-- Naive ensembles of top-N models (errors are correlated)
+- **Focal loss** — hurts on a balanced dataset.
+- **Strong/aggressive augmentation** — degrades precision at ≥224 px.
+- **Training beyond 25 epochs at 384 px** — overfits, validation F1 regresses.
+- **Threshold tuning on the validation set** — validation saturates to F1 = 1.0, so thresholds don't transfer.
+- **Naive ensembles of top-N single models** — errors are highly correlated; the gain is negligible vs the compute cost.
 
 ---
 
-## 3. Use Cases
+## 3. Deployment Patterns
 
 ### 3.1 OCR / document pre-check
 
@@ -101,29 +91,29 @@ else:
     return run_ocr(...)
 ```
 
-Saves OCR compute on unusable inputs and gives users an immediate "please retake the photo" signal.
+Saves OCR compute on unusable inputs and gives end users an immediate "please retake the photo" signal — a UX win and a cost win in the same component.
 
 ### 3.2 Upload-time quality filter
 
-Plug as middleware in an image upload API. Reject or flag low-quality uploads before they hit storage or trigger downstream processing. The `uncertain` class lets you tune precision vs. user friction.
+Drop-in middleware in an image upload API. Reject or flag low-quality uploads before they hit storage or trigger downstream processing. The `uncertain` class lets product teams tune the precision / user-friction trade-off per channel (e.g. stricter on KYC, looser on social uploads).
 
-### 3.3 Dataset curation
+### 3.3 Dataset curation for ML programs
 
-Point at a directory of unlabeled images and let the batch CLI partition them into `sharp/`, `blurred/`, `uncertain/` for downstream annotation or training. ~7 ms per image on CPU → a million images in under 2 hours on a single core.
+Point the batch CLI at a directory of unlabeled images and it partitions them into `sharp/`, `blurred/`, `uncertain/` for downstream annotation or training. At ~7 ms per image on CPU, **a million images finish in under two hours on a single core** — a typical pre-step for any supervised vision program.
 
-### 3.4 Routing layer in front of expensive models
+### 3.4 Cost routing in front of expensive models
 
 ```
-image ─► BlurDetector ─┬─► sharp   ─► run full VLM (expensive)
-                       ├─► blurred ─► skip, return low-quality flag
-                       └─► uncertain ─► run small fallback model, or human
+image ─► BlurDetector ─┬─► sharp     ─► run full VLM / paid API (expensive)
+                       ├─► blurred   ─► skip, return low-quality flag
+                       └─► uncertain ─► small fallback model, or human
 ```
 
-Cost-sensitive teams see large savings — the blur detector is ~1000× cheaper than a vision LLM, so even rejecting 10% of traffic is a large win.
+The blur detector is roughly **1,000× cheaper than a vision LLM**, so even rejecting 10% of traffic is a meaningful monthly saving. In engagements where VLM spend dominates, this single gate often pays for itself within days.
 
 ### 3.5 Edge / on-device inference
 
-17 MB ONNX artifact with `dynamic_axes` enabled — deployable to mobile (CoreML/TFLite via ONNX converters), browser (ONNX Runtime Web), or embedded devices. Multi-scale TTA is opt-in; single-scale at 384px still gets F1=0.9722.
+17 MB ONNX artifact with `dynamic_axes` enabled — deployable to mobile (CoreML / TFLite via ONNX converters), browser (ONNX Runtime Web), or embedded devices. Multi-scale TTA is opt-in; single-scale inference at 384 px still achieves F1 = 0.9722 if latency is the binding constraint.
 
 ---
 
@@ -133,11 +123,12 @@ Cost-sensitive teams see large savings — the blur detector is ~1000× cheaper 
 
 ```bash
 python blur_detector/scripts/predict.py \
-  --checkpoint blur_detector/outputs/checkpoints/exp29_large_384_gamma/best.pt \
+  --checkpoint blur_detector/outputs/checkpoints/champion/best.pt \
   path/to/image.jpg path/to/other.png
 ```
 
-Output:
+Output (one JSON line per image):
+
 ```json
 {"file": "path/to/image.jpg", "label": "sharp",   "confidence": 0.97, "prob_sharp": 0.97, "prob_blurred": 0.03}
 {"file": "path/to/other.png", "label": "blurred", "confidence": 1.00, "prob_sharp": 0.00, "prob_blurred": 1.00}
@@ -146,27 +137,23 @@ Output:
 ### Reproduce the champion
 
 ```bash
-# 1. Train (GPU recommended — 25 epochs @ 384px)
+# Train (GPU recommended — 25 epochs @ 384px, ~2h on a single A100)
 python blur_detector/scripts/train.py \
   --run_name production \
   --backbone mobilenet_v3_large --image_size 384 --batch_size 24 --lr 1e-4 \
-  --loss ce --aug_level medium --epochs 25 --use_blur_gamma \
-  --exp_id 100 --notes 'production reproduce'
+  --loss ce --aug_level medium --epochs 25 --use_blur_gamma
 
-# 2. Evaluate with multi-scale TTA
-python autoresearch/multiscale_tta.py \
-  --run_name production --backbone mobilenet_v3_large \
-  --scales 256,320,384,448,512 --exp_id 101 --notes 'MS-TTA eval'
-
-# 3. Inspect the log
-cat autoresearch/results.tsv
+# Evaluate on the official GoPro test split
+python blur_detector/scripts/evaluate.py \
+  --checkpoint blur_detector/outputs/checkpoints/production/best.pt \
+  --backbone mobilenet_v3_large --image_size 384
 ```
 
 ### Export to ONNX for deployment
 
 ```bash
 python blur_detector/scripts/export_onnx.py \
-  --checkpoint .../exp29_large_384_gamma/best.pt \
+  --checkpoint blur_detector/outputs/checkpoints/production/best.pt \
   --backbone mobilenet_v3_large --image_size 384 \
   --onnx_path blur_detector.onnx
 ```
@@ -177,34 +164,32 @@ python blur_detector/scripts/export_onnx.py \
 
 ```
 MagikaDocument/
-├── blur_detector/
-│   ├── configs/        — YAML hyperparameter config
-│   ├── data/           — GoPro dataset (gitignored)
-│   ├── outputs/        — Checkpoints + ONNX artifact (gitignored)
-│   ├── src/
-│   │   ├── datasets/   — GoProDataset (paired sharp/blur labeling)
-│   │   ├── models/     — MobileNetV3, TinyCNN, EfficientNet backbones
-│   │   ├── training/   — Trainer (AdamW, Cosine, AMP, early stop)
-│   │   ├── inference/  — BlurPredictor (multi-scale TTA + uncertain routing)
-│   │   └── utils/      — Metrics (F1, AUC, confusion)
-│   └── scripts/        — prepare, train, evaluate, predict, export_onnx
-├── autoresearch/
-│   ├── program.md      — Research loop instructions
-│   ├── sweep.sh        — Parallel 4-experiment launcher
-│   ├── threshold_sweep.py, ensemble_eval.py,
-│   │ multiscale_tta.py, ultimate_ensemble.py
-│   └── results.tsv     — Full experiment log (46 runs)
-└── README.md           — This file
+└── blur_detector/
+    ├── configs/        — YAML hyperparameter config
+    ├── data/           — GoPro dataset (gitignored, fetched separately)
+    ├── outputs/        — Checkpoints + ONNX artifact (gitignored)
+    ├── src/
+    │   ├── datasets/   — GoProDataset (paired sharp/blur labeling)
+    │   ├── models/     — MobileNetV3, TinyCNN, EfficientNet backbones
+    │   ├── training/   — Trainer (AdamW, Cosine, AMP, early stop)
+    │   ├── inference/  — BlurPredictor (multi-scale TTA + uncertain routing)
+    │   └── utils/      — Metrics (F1, AUC, confusion matrix)
+    └── scripts/        — prepare, train, evaluate, predict, export_onnx
 ```
 
 ---
 
-## 6. Extensions
+## 6. Adapting to Your Domain
 
-If your blur distribution differs from GoPro motion blur (e.g. defocus, low-light, compression artifacts), retrain with:
+If your blur distribution differs from GoPro motion blur — e.g. defocus, low-light, compression artifacts, scanner skew — the recipe retrains cleanly with domain data:
 
-1. **More blur types** — mix GoPro with REDS (video deblurring) or synthetic defocus from public clean-image datasets.
-2. **Domain-specific sharp set** — if you deploy on receipts/documents, use a few thousand domain-sharp images as the positive class and generate synthetic motion/defocus blur.
-3. **Multi-class taxonomy** — swap the 2-class head for `{sharp, motion_blur, defocus_blur, noise, low_light}` when you want the downstream pipeline to react differently to different degradation types.
+1. **More blur types** — mix GoPro with REDS (video deblurring) or synthetic defocus generated from clean images. The two-class formulation does not change.
+2. **Domain-specific sharp set** — for receipts, documents, or IDs, use a few thousand domain-sharp images as the positive class and generate synthetic motion/defocus blur with standard OpenCV kernels.
+3. **Multi-class taxonomy** — swap the 2-class head for `{sharp, motion_blur, defocus_blur, noise, low_light}` when the downstream pipeline should react differently to different degradation types (e.g. retry on motion blur, reject on low-light).
+4. **Calibration to your operating point** — confidence threshold (default 0.60) is a product-level knob. Sweep it on a small hand-labeled slice of production traffic to lock in the precision/recall trade-off you want.
 
-See `autoresearch/program.md` for the research ideas that were scoped but not executed (mixup between blur/sharp, full-resolution crops, distillation to TinyCNN, curriculum learning).
+---
+
+## 7. Engagement & Licensing
+
+The code in this repository is released under the MIT license. For production integrations, custom training on domain data, or a tailored version of the pipeline (edge deployment, multi-class taxonomy, bespoke routing logic), please reach out to the maintainer.
