@@ -29,6 +29,9 @@ outputs/
 # Reference codebase (has its own upstream)
 magika/
 
+# Autoresearch (experiment logs, not part of the AI model)
+autoresearch/
+
 # IDE
 .idea/
 .vscode/
