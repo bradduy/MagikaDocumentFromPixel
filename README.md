@@ -190,6 +190,17 @@ If your blur distribution differs from GoPro motion blur — e.g. defocus, low-l
 
 ---
 
-## 7. Engagement & Licensing
+## 7. Author
 
-The code in this repository is released under the MIT license. For production integrations, custom training on domain data, or a tailored version of the pipeline (edge deployment, multi-class taxonomy, bespoke routing logic), please reach out to the maintainer.
+**Duy Tran Thanh (Brad Duy)** — Sr. Applied AI Engineer
+
+Author and maintainer of this project. Available for applied-AI consulting engagements: production integrations, custom training on domain data, and tailored versions of the pipeline (edge deployment, multi-class taxonomy, bespoke routing logic).
+
+- GitHub: [@bradduy](https://github.com/bradduy)
+- Hugging Face: [@bradduy](https://huggingface.co/bradduy)
+
+---
+
+## 8. Licensing
+
+Released under the **MIT License** — see [LICENSE](LICENSE). Copyright © 2026 Duy Tran Thanh (Brad Duy).
