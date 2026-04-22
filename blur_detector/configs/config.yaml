@@ -1,0 +1,37 @@
+data:
+  gopro_root: "blur_detector/data/gopro"  # relative to project root
+  image_size: 128
+  color_mode: "RGB"
+  train_val_split: 0.1              # fraction of train set used for validation
+
+augmentation:
+  random_crop: true
+  horizontal_flip: true
+  brightness_jitter: 0.2
+  contrast_jitter: 0.2
+
+model:
+  backbone: "mobilenet_v3_small"    # options: mobilenet_v3_small | tiny_cnn
+  num_classes: 2
+  pretrained: true
+
+training:
+  epochs: 30
+  batch_size: 32
+  optimizer: "adamw"
+  lr: 0.0001
+  weight_decay: 0.0001
+  early_stopping_patience: 5
+  early_stopping_metric: "val_f1"
+
+inference:
+  confidence_threshold: 0.60        # below this → "uncertain"
+  blur_prob_threshold: 0.50
+
+export:
+  onnx_path: "blur_detector/outputs/blur_detector.onnx"
+  opset_version: 17
+
+paths:
+  checkpoint_dir: "blur_detector/outputs/checkpoints"
+  log_dir: "blur_detector/outputs/logs"

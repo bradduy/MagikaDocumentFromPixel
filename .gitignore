@@ -1,0 +1,42 @@
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Logs
+*.log
+
+# ML artifacts (remote-only per CLAUDE.md)
+blur_detector/data/
+blur_detector/outputs/
+data/
+outputs/
+
+# Reference codebase (has its own upstream)
+magika/
+
+# IDE
+.idea/
+.vscode/
+
+# Claude local state
+.claude/
+CLAUDE.md
+
+# Local-only files
+sync.sh
+implementation_plan.md
