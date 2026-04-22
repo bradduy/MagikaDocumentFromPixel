@@ -43,3 +43,8 @@ CLAUDE.md
 # Local-only files
 sync.sh
 implementation_plan.md
+
+# Secrets
+.env
+.env.*
+!.env.example
