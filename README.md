@@ -14,6 +14,10 @@ A **Magika-inspired image quality gate** that classifies images as `sharp`, `blu
 | Model size | 17 MB |
 | Inference latency | ~17 ms / image (CPU, single-scale) |
 
+![Where our gate sits in the image-quality landscape](assets/overview.png)
+
+*Fig. 1 — Where our gate sits in the image-quality landscape. Each row scores a method on the four properties a production blur-gate needs (cheap CPU, binary gate, abstains, image blur); every existing approach fails at least one column. Our gate is the first to satisfy all four, lifting F1 on GoPro Large from 0.9672 (fixed-scale baseline) to **0.9803** on the same hardware.*
+
 ---
 
 ## 1. The Business Problem
@@ -41,6 +45,10 @@ Existing alternatives fail on both ends: heavy restoration networks (deblur GANs
 A two-class CNN classifier with a confidence-aware routing head, designed after the **Magika file-type detection** philosophy:
 
 > *A small model, fast inference, CPU-friendly, constant-cost preprocessing, confidence-aware output — used as a routing or gating component, not as a final answer.*
+
+![Full architecture, read left-to-right](assets/architecture.png)
+
+*Fig. 2 — Full architecture, read left-to-right. The **Edge Prior Module (EPM)** extracts an edge map in three steps — grayscale → Laplacian filter → standardize — and concatenates it onto the RGB photo as a 4th input channel. The shared CNN is evaluated at five image resolutions (256, 320, 384, 448, 512); the Σ/5 block averages per-scale predictions, and the routing diamond emits `sharp`, `uncertain`, or `blurred` depending on whether the averaged confidence clears τ = 0.60. The `uncertain` bucket is the deliberate abstention that routes low-confidence cases to a heavier model or a human. 🔥 = learnable; ❄️ = frozen / parameter-free.*
 
 ### Recipe (F1 = 0.9803)
 
