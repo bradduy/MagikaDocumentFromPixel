@@ -6,13 +6,13 @@ A **Magika-inspired image quality gate** that classifies images as `sharp`, `blu
 
 | Metric | Value |
 |---|---|
-| F1 | **0.9749** |
-| Accuracy | 0.9752 |
-| Precision | 0.9889 |
-| Recall | 0.9613 |
-| AUC | 0.9982 |
-| Model size | 17 MB (ONNX) |
-| Inference latency | ~7 ms / image (CPU, single-scale) |
+| F1 | **0.9803** |
+| Accuracy | 0.9806 |
+| Precision | 0.9981 |
+| Recall | 0.9631 |
+| AUC | 0.9989 |
+| Model size | 17 MB |
+| Inference latency | ~17 ms / image (CPU, single-scale) |
 
 ---
 
@@ -42,12 +42,13 @@ A two-class CNN classifier with a confidence-aware routing head, designed after 
 
 > *A small model, fast inference, CPU-friendly, constant-cost preprocessing, confidence-aware output — used as a routing or gating component, not as a final answer.*
 
-### Recipe (F1 = 0.9749)
+### Recipe (F1 = 0.9803)
 
 - **Data**: GoPro Large dataset. Both `blur/` and `blur_gamma/` folders count as positive (blurred); `sharp/` is negative. Paired sample generation — no extra human annotation required.
 - **Backbone**: MobileNetV3-Large, ImageNet-pretrained, 2-class softmax head (~3.3M parameters).
+- **Frequency-domain auxiliary channel (Freq-Aux)**: a per-image-standardized Laplacian magnitude map is concatenated to the RGB tensor as a **4th input channel**. The first conv is expanded from 3→4 channels (pretrained RGB weights preserved; the new slice is initialized from the mean of the RGB kernels). The Laplacian gives the network an explicit, scale-invariant edge-energy cue that classical blur heuristics rely on, freeing the convolutional layers to learn the harder texture vs structure distinction.
 - **Training**: 384×384 input, AdamW lr=1e-4, CosineAnnealing, CrossEntropy, 25 epochs, medium augmentation (crop, flip, mild color jitter), mixed-precision.
-- **Inference**: **5-scale multi-scale TTA** — run the model at 256, 320, 384, 448, 512 and average the softmax probabilities. Free +0.27% F1 over single-scale, no retraining.
+- **Inference**: **5-scale multi-scale TTA** — run the model at 256, 320, 384, 448, 512 and average the softmax probabilities. Adds +0.57% F1 over single-scale, no retraining.
 - **Routing**: return `sharp` or `blurred` when max softmax ≥ 0.60, otherwise return `uncertain` so the pipeline can hand off to a heavier model or a human.
 
 ### What we learned (engineering insights)
@@ -74,10 +75,12 @@ Approaches we rejected after evaluation — worth noting for any team tempted to
 
 ```python
 from blur_detector.src.models.blur_detector import build_model
+from blur_detector.src.datasets.freq_aux import FreqAuxModel
 from blur_detector.src.inference.predictor import BlurPredictor
 import torch
 
-model = build_model("mobilenet_v3_large", pretrained=False)
+backbone = build_model("mobilenet_v3_large", pretrained=False, in_channels=4)
+model = FreqAuxModel(backbone)
 model.load_state_dict(torch.load("blur_detector_champion.pt"))
 
 predictor = BlurPredictor(model, image_size=[256, 320, 384, 448, 512])
@@ -137,7 +140,7 @@ docker run --rm \
   -v "$PWD/samples:/app/samples" \
   magika-document:latest \
   python blur_detector/scripts/predict.py \
-    --checkpoint /app/weights/best.pt \
+    --checkpoint /app/weights/best.pt --freq_aux \
     /app/samples/your_image.jpg
 ```
 
@@ -165,24 +168,24 @@ cd MagikaDocumentFromPixel
 
 ### 4.4 Download pretrained weights
 
-Champion checkpoint and ONNX artifact are hosted on Hugging Face: **[bradduy/magika-blur-detector](https://huggingface.co/bradduy/magika-blur-detector)**.
+Champion checkpoint and ONNX artifact are hosted on Hugging Face: **[bradduy/MagikaDocumentFromPixel](https://huggingface.co/bradduy/MagikaDocumentFromPixel)**.
 
 ```bash
 # Option A — huggingface_hub (Python)
 pip install huggingface_hub
 python -c "from huggingface_hub import snapshot_download; \
-  snapshot_download('bradduy/magika-blur-detector', local_dir='blur_detector/outputs/checkpoints/champion')"
+  snapshot_download('bradduy/MagikaDocumentFromPixel', local_dir='blur_detector/outputs/checkpoints/champion')"
 
 # Option B — git lfs
 git lfs install
-git clone https://huggingface.co/bradduy/magika-blur-detector blur_detector/outputs/checkpoints/champion
+git clone https://huggingface.co/bradduy/MagikaDocumentFromPixel blur_detector/outputs/checkpoints/champion
 
 # Option C — direct download
 mkdir -p blur_detector/outputs/checkpoints/champion
 curl -L -o blur_detector/outputs/checkpoints/champion/best.pt \
-  https://huggingface.co/bradduy/magika-blur-detector/resolve/main/best.pt
+  https://huggingface.co/bradduy/MagikaDocumentFromPixel/resolve/main/best.pt
 curl -L -o blur_detector/outputs/checkpoints/champion/blur_detector.onnx \
-  https://huggingface.co/bradduy/magika-blur-detector/resolve/main/blur_detector.onnx
+  https://huggingface.co/bradduy/MagikaDocumentFromPixel/resolve/main/blur_detector.onnx
 ```
 
 After this step, the `--checkpoint` paths shown in the next section work out of the box.
@@ -195,7 +198,7 @@ After this step, the `--checkpoint` paths shown in the next section work out of 
 
 ```bash
 python blur_detector/scripts/predict.py \
-  --checkpoint blur_detector/outputs/checkpoints/champion/best.pt \
+  --checkpoint blur_detector/outputs/checkpoints/champion/best.pt --freq_aux \
   path/to/image.jpg path/to/other.png
 ```
 
@@ -209,24 +212,23 @@ Output (one JSON line per image):
 ### Reproduce the champion
 
 ```bash
-# Train (GPU recommended — 25 epochs @ 384px, ~2h on a single A100)
+# Train (GPU recommended — 25 epochs @ 384px, ~4 min on an MI355X / ~2h on a single A100)
 python blur_detector/scripts/train.py \
-  --run_name production \
+  --run_name freq_aux \
   --backbone mobilenet_v3_large --image_size 384 --batch_size 24 --lr 1e-4 \
-  --loss ce --aug_level medium --epochs 25 --use_blur_gamma
+  --loss ce --aug_level medium --epochs 25 --use_blur_gamma --freq_aux
 
 # Evaluate on the official GoPro test split
 python blur_detector/scripts/evaluate.py \
-  --checkpoint blur_detector/outputs/checkpoints/production/best.pt \
-  --backbone mobilenet_v3_large --image_size 384
+  --checkpoint blur_detector/outputs/checkpoints/freq_aux/best.pt --freq_aux
 ```
 
 ### Export to ONNX for deployment
 
 ```bash
 python blur_detector/scripts/export_onnx.py \
-  --checkpoint blur_detector/outputs/checkpoints/production/best.pt \
-  --backbone mobilenet_v3_large --image_size 384 \
+  --checkpoint blur_detector/outputs/checkpoints/freq_aux/best.pt \
+  --backbone mobilenet_v3_large --image_size 384 --freq_aux \
   --onnx_path blur_detector.onnx
 ```
 

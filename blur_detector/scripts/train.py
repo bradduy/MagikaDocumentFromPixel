@@ -20,6 +20,8 @@ ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.datasets.gopro_dataset import GoProDataset
+from src.datasets.res_rand_collate import make_res_rand_collate
+from src.datasets.freq_aux import FreqAuxModel
 from src.models.blur_detector import build_model
 from src.training.trainer import Trainer
 from src.utils.metrics import compute_metrics
@@ -83,6 +85,11 @@ def main():
     p.add_argument("--use_blur_gamma", action="store_true",
                    help="Include GoPro blur_gamma images as additional blurred training examples")
     p.add_argument("--num_workers", type=int, default=8)
+    p.add_argument("--res_rand_scales", default="",
+                   help="Comma-separated scale set for resolution-randomized training "
+                        "(e.g. 256,320,384,448,512). Empty = disabled (fixed-scale).")
+    p.add_argument("--freq_aux", action="store_true",
+                   help="Concatenate Laplacian-magnitude as a 4th input channel.")
     p.add_argument("--exp_id", type=int, default=0)
     p.add_argument("--notes", default="")
     p.add_argument("--skip_eval", action="store_true")
@@ -121,12 +128,25 @@ def main():
     )
     print(f"[{args.run_name}] Train={len(train_ds)} Val={len(val_ds)} Test={len(test_ds)}")
 
-    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True,
-                              num_workers=args.num_workers, pin_memory=True, persistent_workers=True)
-    val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False,
-                            num_workers=args.num_workers, pin_memory=True, persistent_workers=True)
+    train_collate = None
+    if args.res_rand_scales:
+        scales = tuple(int(s) for s in args.res_rand_scales.split(",") if s.strip())
+        print(f"[{args.run_name}] Res-Rand enabled: train batches will be resized "
+              f"uniformly to one of {scales} per batch.")
+        train_collate = make_res_rand_collate(scales, seed=0)
 
-    model = build_model(backbone=backbone, pretrained=cfg["model"]["pretrained"])
+    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True,
+                              num_workers=args.num_workers, pin_memory=True,
+                              persistent_workers=(args.num_workers > 0), collate_fn=train_collate)
+    val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False,
+                            num_workers=args.num_workers, pin_memory=True, persistent_workers=(args.num_workers > 0))
+
+    in_channels = 4 if args.freq_aux else 3
+    backbone_net = build_model(backbone=backbone, pretrained=cfg["model"]["pretrained"],
+                               in_channels=in_channels)
+    model = FreqAuxModel(backbone_net) if args.freq_aux else backbone_net
+    if args.freq_aux:
+        print(f"[{args.run_name}] Freq-Aux enabled: Laplacian magnitude as 4th input channel.")
 
     ckpt_dir = ROOT / cfg["paths"]["checkpoint_dir"] / args.run_name
     trainer = Trainer(

@@ -6,16 +6,64 @@ import torchvision.models as tvm
 NUM_CLASSES = 2
 
 
-def build_model(backbone: str = "mobilenet_v3_small", pretrained: bool = True) -> nn.Module:
+def build_model(
+    backbone: str = "mobilenet_v3_small",
+    pretrained: bool = True,
+    in_channels: int = 3,
+) -> nn.Module:
     if backbone == "mobilenet_v3_small":
-        return _mobilenet_v3_small(pretrained)
-    if backbone == "mobilenet_v3_large":
-        return _mobilenet_v3_large(pretrained)
-    if backbone == "efficientnet_b0":
-        return _efficientnet_b0(pretrained)
-    if backbone == "tiny_cnn":
-        return TinyCNN()
-    raise ValueError(f"Unknown backbone: {backbone}")
+        m = _mobilenet_v3_small(pretrained)
+    elif backbone == "mobilenet_v3_large":
+        m = _mobilenet_v3_large(pretrained)
+    elif backbone == "efficientnet_b0":
+        m = _efficientnet_b0(pretrained)
+    elif backbone == "tiny_cnn":
+        m = TinyCNN()
+    else:
+        raise ValueError(f"Unknown backbone: {backbone}")
+    if in_channels != 3:
+        _expand_first_conv(m, in_channels)
+    return m
+
+
+def _expand_first_conv(model: nn.Module, in_channels: int) -> None:
+    """Replace the first conv to accept ``in_channels`` input channels while
+    preserving pretrained RGB weights on the first 3 channels. Extra channels
+    are initialized to the mean of the RGB kernels, scaled by 0.1 — a common
+    warm-start for auxiliary-channel extension.
+    """
+    first = None
+    for name, mod in model.named_modules():
+        if isinstance(mod, nn.Conv2d):
+            first = (name, mod)
+            break
+    if first is None:
+        raise RuntimeError("No Conv2d found")
+    name, conv = first
+    new_conv = nn.Conv2d(
+        in_channels, conv.out_channels,
+        kernel_size=conv.kernel_size, stride=conv.stride,
+        padding=conv.padding, dilation=conv.dilation,
+        groups=conv.groups, bias=conv.bias is not None,
+    )
+    with torch.no_grad():
+        new_conv.weight.zero_()
+        new_conv.weight[:, :3].copy_(conv.weight)
+        if in_channels > 3:
+            extra = conv.weight.mean(dim=1, keepdim=True) * 0.1
+            new_conv.weight[:, 3:].copy_(extra.expand(-1, in_channels - 3, -1, -1))
+        if conv.bias is not None:
+            new_conv.bias.copy_(conv.bias)
+    # Attach new conv in place
+    parent = model
+    parts = name.split(".")
+    for p in parts[:-1]:
+        parent = getattr(parent, p) if not p.isdigit() else parent[int(p)]
+    last = parts[-1]
+    if last.isdigit():
+        parent[int(last)] = new_conv
+    else:
+        setattr(parent, last, new_conv)
 
 
 def _mobilenet_v3_small(pretrained: bool) -> nn.Module:

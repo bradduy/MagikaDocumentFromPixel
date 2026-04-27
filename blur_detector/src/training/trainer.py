@@ -55,7 +55,10 @@ class Trainer:
         self.patience = early_stopping_patience
         self.ckpt_dir = Path(checkpoint_dir)
         self.ckpt_dir.mkdir(parents=True, exist_ok=True)
-        self.use_amp = use_amp and self.device.type == "cuda"
+        is_rocm = getattr(torch.version, "hip", None) is not None
+        self.use_amp = use_amp and self.device.type == "cuda" and not is_rocm
+        if use_amp and is_rocm:
+            print("[Trainer] AMP disabled on ROCm (hangs under HSA_OVERRIDE_GFX_VERSION); using fp32.")
 
         self.criterion = build_loss(loss)
         self.optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=weight_decay)

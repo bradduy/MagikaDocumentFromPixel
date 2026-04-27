@@ -17,6 +17,7 @@ from tqdm import tqdm
 ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from src.datasets.freq_aux import FreqAuxModel
 from src.datasets.gopro_dataset import GoProDataset
 from src.models.blur_detector import build_model
 from src.utils.metrics import compute_metrics
@@ -27,6 +28,9 @@ def main():
     parser.add_argument("--config", default="blur_detector/configs/config.yaml")
     parser.add_argument("--checkpoint", default="blur_detector/outputs/checkpoints/best.pt")
     parser.add_argument("--output_json", default="blur_detector/outputs/eval_results.json")
+    parser.add_argument("--freq_aux", action="store_true",
+                        help="Wrap backbone with FreqAuxModel (4-channel RGB+Laplacian input). "
+                             "Required when evaluating the freq_aux checkpoint.")
     args = parser.parse_args()
 
     config_path = ROOT / args.config
@@ -45,7 +49,9 @@ def main():
     test_loader = DataLoader(test_ds, batch_size=cfg["training"]["batch_size"], shuffle=False, num_workers=4)
     print(f"Test set: {len(test_ds)} samples")
 
-    model = build_model(backbone=cfg["model"]["backbone"], pretrained=False)
+    in_channels = 4 if args.freq_aux else 3
+    backbone_net = build_model(backbone=cfg["model"]["backbone"], pretrained=False, in_channels=in_channels)
+    model = FreqAuxModel(backbone_net) if args.freq_aux else backbone_net
     model.load_state_dict(torch.load(ROOT / args.checkpoint, map_location=device))
     model = model.to(device).eval()
 

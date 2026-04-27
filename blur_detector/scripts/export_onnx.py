@@ -13,6 +13,7 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from src.datasets.freq_aux import FreqAuxModel
 from src.models.blur_detector import build_model
 
 
@@ -23,6 +24,10 @@ def main():
     parser.add_argument("--backbone", default=None, help="Override backbone from config")
     parser.add_argument("--image_size", type=int, default=None, help="Override image_size")
     parser.add_argument("--onnx_path", default=None, help="Override output ONNX path")
+    parser.add_argument("--freq_aux", action="store_true",
+                        help="Wrap backbone with FreqAuxModel before export. The exported "
+                             "graph still takes a 3-channel RGB tensor (the Laplacian channel "
+                             "is computed inside the graph).")
     args = parser.parse_args()
 
     with open(args.config) as f:
@@ -33,7 +38,9 @@ def main():
     onnx_path = args.onnx_path or cfg["export"]["onnx_path"]
 
     device = torch.device("cpu")
-    model = build_model(backbone=backbone, pretrained=False)
+    in_channels = 4 if args.freq_aux else 3
+    backbone_net = build_model(backbone=backbone, pretrained=False, in_channels=in_channels)
+    model = FreqAuxModel(backbone_net) if args.freq_aux else backbone_net
     model.load_state_dict(torch.load(args.checkpoint, map_location=device))
     model.eval()
 

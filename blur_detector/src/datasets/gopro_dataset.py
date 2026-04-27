@@ -55,10 +55,17 @@ def _build_transforms(image_size: int, augment: bool, color_mode: str, aug_level
 class GoProDataset(Dataset):
     """
     Strategy A: each blur image → label 1, each sharp image → label 0.
-    Expected layout:
+    Supports both the flat layout and the official GoPro Large per-scene layout.
+
+    Flat layout (legacy):
         gopro_root/
           train/blur/*.png   train/sharp/*.png
           test/blur/*.png    test/sharp/*.png
+
+    Per-scene layout (official GoPro Large zip):
+        gopro_root/
+          train/<scene>/{blur, blur_gamma, sharp}/*.png
+          test/<scene>/{blur, blur_gamma, sharp}/*.png
     """
 
     def __init__(
@@ -85,31 +92,31 @@ class GoProDataset(Dataset):
 
         root = Path(gopro_root)
         raw_split = "test" if split == "test" else "train"
-        blur_images = sorted(
-            p for ext in ("*.png", "*.jpg", "*.jpeg")
-            for p in (root / raw_split / "blur").glob(f"**/{ext}")
-        )
-        sharp_images = sorted(
-            p for ext in ("*.png", "*.jpg", "*.jpeg")
-            for p in (root / raw_split / "sharp").glob(f"**/{ext}")
-        )
+        split_root = root / raw_split
+
+        def _collect(subdir_name: str) -> list[Path]:
+            flat = split_root / subdir_name
+            if flat.is_dir():
+                return sorted(
+                    p for ext in ("*.png", "*.jpg", "*.jpeg")
+                    for p in flat.glob(f"**/{ext}")
+                )
+            return sorted(
+                p for ext in ("*.png", "*.jpg", "*.jpeg")
+                for p in split_root.glob(f"*/{subdir_name}/{ext}")
+            )
+
+        blur_images = _collect("blur")
+        sharp_images = _collect("sharp")
 
         samples: list[Tuple[Path, int]] = (
             [(p, LABEL_BLURRED) for p in blur_images] +
             [(p, LABEL_SHARP) for p in sharp_images]
         )
 
-        # Optionally add GoPro blur_gamma variants as additional blurred examples.
-        # These live alongside train/blur and train/sharp as train/blur_gamma when
-        # reorganized. They provide a second blur style (gamma-corrected synthesis).
         if include_blur_gamma and split != "test":
-            blur_gamma_dir = root / raw_split / "blur_gamma"
-            if blur_gamma_dir.is_dir():
-                gamma_images = sorted(
-                    p for ext in ("*.png", "*.jpg", "*.jpeg")
-                    for p in blur_gamma_dir.glob(f"**/{ext}")
-                )
-                samples.extend((p, LABEL_BLURRED) for p in gamma_images)
+            gamma_images = _collect("blur_gamma")
+            samples.extend((p, LABEL_BLURRED) for p in gamma_images)
 
         if split in ("train", "val"):
             rng = random.Random(seed)

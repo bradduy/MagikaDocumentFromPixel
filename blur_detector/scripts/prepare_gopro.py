@@ -9,18 +9,30 @@ from pathlib import Path
 
 
 def check_split(root: Path, split: str):
-    blur_dir = root / split / "blur"
-    sharp_dir = root / split / "sharp"
+    """Supports both flat layout (split/blur, split/sharp) and the official
+    GoPro Large per-scene layout (split/<scene>/{blur,blur_gamma,sharp})."""
+    split_root = root / split
+    if not split_root.is_dir():
+        print(f"  MISSING: {split_root}")
+        return False
+
     ok = True
-
-    for d in (blur_dir, sharp_dir):
-        if not d.is_dir():
-            print(f"  MISSING: {d}")
-            ok = False
+    for subdir in ("blur", "sharp"):
+        flat = split_root / subdir
+        if flat.is_dir():
+            count = sum(len(list(flat.glob(f"**/{ext}"))) for ext in ("*.png", "*.jpg", "*.jpeg"))
+            print(f"  {flat}  →  {count} images  (flat layout)")
         else:
-            count = sum(len(list(d.glob(f"**/{ext}"))) for ext in ("*.png", "*.jpg", "*.jpeg"))
-            print(f"  {d}  →  {count} images")
-
+            files = [
+                p for ext in ("*.png", "*.jpg", "*.jpeg")
+                for p in split_root.glob(f"*/{subdir}/{ext}")
+            ]
+            scenes = sorted({p.parent.parent.name for p in files})
+            if files:
+                print(f"  {split_root}/*/{subdir}  →  {len(files)} images across {len(scenes)} scenes  (per-scene)")
+            else:
+                print(f"  MISSING {subdir}: not found under {split_root}")
+                ok = False
     return ok
 
 
