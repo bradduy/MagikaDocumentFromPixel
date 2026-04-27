@@ -275,6 +275,27 @@ Author and maintainer of this project. Available for applied-AI consulting engag
 
 ---
 
-## 9. Licensing
+## 9. Citation
+
+If you use this work in research or production, please cite:
+
+> Duy, Tran Thanh (2026). *Edges Before Embeddings: A Confidence-Aware Blur Gate for Vision-Language Pipelines.* Zenodo. https://doi.org/10.5281/zenodo.19765336
+
+BibTeX:
+
+```bibtex
+@misc{duy2026edges,
+  author       = {Duy, Tran Thanh},
+  title        = {Edges Before Embeddings: A Confidence-Aware Blur Gate for Vision-Language Pipelines},
+  year         = {2026},
+  publisher    = {Zenodo},
+  doi          = {10.5281/zenodo.19765336},
+  url          = {https://doi.org/10.5281/zenodo.19765336}
+}
+```
+
+---
+
+## 10. Licensing
 
 Released under the **MIT License** — see [LICENSE](LICENSE). Copyright © 2026 Duy Tran Thanh (Brad Duy).
