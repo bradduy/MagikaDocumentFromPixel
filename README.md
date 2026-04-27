@@ -42,23 +42,7 @@ A two-class CNN classifier with a confidence-aware routing head, designed after 
 - **Training**: 384×384 input, AdamW lr=1e-4, CosineAnnealing, CrossEntropy, 25 epochs, medium augmentation (crop, flip, mild color jitter), mixed-precision.
 - **Inference**: **5-scale multi-scale TTA** — run the model at 256, 320, 384, 448, 512 and average the softmax probabilities. Adds +0.57% F1 over single-scale, no retraining.
 - **Routing**: return `sharp` or `blurred` when max softmax ≥ 0.60, otherwise return `uncertain` so the pipeline can hand off to a heavier model or a human.
-
-### What we learned (engineering insights)
-
-The final recipe is the output of a systematic evaluation across backbones, resolutions, losses, augmentation intensities, and ensembling strategies. Three findings that materially changed the design:
-
-- **Resolution is by far the biggest lever.** Moving from 128 → 384 px alone adds +13% F1, far outweighing any architectural choice we tried.
-- **Capacity × resolution interact non-linearly.** MobileNetV3-Large was neutral or slightly worse than MNV3-Small at 160-320 px, but clearly wins at ≥384 px. Model capacity only pays off once there is enough signal to learn from.
-- **Extra paired data gives free points.** Including the GoPro `blur_gamma` folder (a second blur style of the same scenes) added +1% F1 with zero engineering cost.
-
-Approaches we rejected after evaluation — worth noting for any team tempted to try them on a similar problem:
-
-- **Focal loss** — hurts on a balanced dataset.
-- **Strong/aggressive augmentation** — degrades precision at ≥224 px.
-- **Training beyond 25 epochs at 384 px** — overfits, validation F1 regresses.
-- **Threshold tuning on the validation set** — validation saturates to F1 = 1.0, so thresholds don't transfer.
-- **Naive ensembles of top-N single models** — errors are highly correlated; the gain is negligible vs the compute cost.
-
+  
 ---
 
 ## 3. Deployment Patterns
