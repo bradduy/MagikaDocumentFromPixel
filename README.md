@@ -117,7 +117,79 @@ The blur detector is roughly **1,000× cheaper than a vision LLM**, so even reje
 
 ---
 
-## 4. How to Use
+## 4. Installation
+
+Three ways to get running, ordered from fastest to most flexible. All paths assume Python ≥ 3.10 if you install natively.
+
+### 4.1 Quick start with Docker (recommended for trying it out)
+
+The image bundles PyTorch (CPU), ONNX Runtime, and the inference scripts. The model weights are pulled from Hugging Face at first run and cached in a mounted volume.
+
+```bash
+# Clone and build
+git clone https://github.com/bradduy/MagikaDocumentFromPixel.git
+cd MagikaDocumentFromPixel
+docker build -t magika-document:latest .
+
+# Run inference on a local image
+docker run --rm \
+  -v "$PWD/weights:/app/weights" \
+  -v "$PWD/samples:/app/samples" \
+  magika-document:latest \
+  python blur_detector/scripts/predict.py \
+    --checkpoint /app/weights/best.pt \
+    /app/samples/your_image.jpg
+```
+
+GPU users can swap the base image for `pytorch/pytorch:2.1.0-cuda12.1-cudnn8-runtime` and add `--gpus all` to the run command.
+
+### 4.2 Install from source (recommended for training / reproduction)
+
+```bash
+git clone https://github.com/bradduy/MagikaDocumentFromPixel.git
+cd MagikaDocumentFromPixel
+
+python -m venv venv
+source venv/bin/activate          # Windows: venv\Scripts\activate
+
+pip install -r blur_detector/requirements.txt
+```
+
+### 4.3 Install via pip (inference-only)
+
+```bash
+pip install torch torchvision onnxruntime pillow numpy pyyaml tqdm
+git clone https://github.com/bradduy/MagikaDocumentFromPixel.git
+cd MagikaDocumentFromPixel
+```
+
+### 4.4 Download pretrained weights
+
+Champion checkpoint and ONNX artifact are hosted on Hugging Face: **[bradduy/magika-blur-detector](https://huggingface.co/bradduy/magika-blur-detector)**.
+
+```bash
+# Option A — huggingface_hub (Python)
+pip install huggingface_hub
+python -c "from huggingface_hub import snapshot_download; \
+  snapshot_download('bradduy/magika-blur-detector', local_dir='blur_detector/outputs/checkpoints/champion')"
+
+# Option B — git lfs
+git lfs install
+git clone https://huggingface.co/bradduy/magika-blur-detector blur_detector/outputs/checkpoints/champion
+
+# Option C — direct download
+mkdir -p blur_detector/outputs/checkpoints/champion
+curl -L -o blur_detector/outputs/checkpoints/champion/best.pt \
+  https://huggingface.co/bradduy/magika-blur-detector/resolve/main/best.pt
+curl -L -o blur_detector/outputs/checkpoints/champion/blur_detector.onnx \
+  https://huggingface.co/bradduy/magika-blur-detector/resolve/main/blur_detector.onnx
+```
+
+After this step, the `--checkpoint` paths shown in the next section work out of the box.
+
+---
+
+## 5. How to Use
 
 ### Run inference
 
@@ -160,7 +232,7 @@ python blur_detector/scripts/export_onnx.py \
 
 ---
 
-## 5. Project Structure
+## 6. Project Structure
 
 ```
 MagikaDocument/
@@ -179,7 +251,7 @@ MagikaDocument/
 
 ---
 
-## 6. Adapting to Your Domain
+## 7. Adapting to Your Domain
 
 If your blur distribution differs from GoPro motion blur — e.g. defocus, low-light, compression artifacts, scanner skew — the recipe retrains cleanly with domain data:
 
@@ -190,7 +262,7 @@ If your blur distribution differs from GoPro motion blur — e.g. defocus, low-l
 
 ---
 
-## 7. Author
+## 8. Author
 
 **Duy Tran Thanh (Brad Duy)** — Sr. Applied AI Engineer
 
@@ -201,6 +273,6 @@ Author and maintainer of this project. Available for applied-AI consulting engag
 
 ---
 
-## 8. Licensing
+## 9. Licensing
 
 Released under the **MIT License** — see [LICENSE](LICENSE). Copyright © 2026 Duy Tran Thanh (Brad Duy).
