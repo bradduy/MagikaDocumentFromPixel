@@ -2,18 +2,6 @@
 
 A **Magika-inspired image quality gate** that classifies images as `sharp`, `blurred`, or `uncertain` in a few milliseconds on CPU. Built to sit at the front of vision pipelines so expensive downstream models (OCR, detection, classification, VLMs) never waste compute on unusable input.
 
-**Result on GoPro Large test split:**
-
-| Metric | Value |
-|---|---|
-| F1 | **0.9803** |
-| Accuracy | 0.9806 |
-| Precision | 0.9981 |
-| Recall | 0.9631 |
-| AUC | 0.9989 |
-| Model size | 17 MB |
-| Inference latency | ~17 ms / image (CPU, single-scale) |
-
 ![Where our gate sits in the image-quality landscape](assets/overview.png)
 
 *Fig. 1 — Where our gate sits in the image-quality landscape. Each row scores a method on the four properties a production blur-gate needs (cheap CPU, binary gate, abstains, image blur); every existing approach fails at least one column. Our gate is the first to satisfy all four, lifting F1 on GoPro Large from 0.9672 (fixed-scale baseline) to **0.9803** on the same hardware.*
@@ -111,6 +99,18 @@ Drop-in middleware in an image upload API. Reject or flag low-quality uploads be
 ### 3.3 Dataset curation for ML programs
 
 Point the batch CLI at a directory of unlabeled images and it partitions them into `sharp/`, `blurred/`, `uncertain/` for downstream annotation or training. At ~7 ms per image on CPU, **a million images finish in under two hours on a single core** — a typical pre-step for any supervised vision program.
+
+**Result on GoPro Large test split:**
+
+| Metric | Value |
+|---|---|
+| F1 | **0.9803** |
+| Accuracy | 0.9806 |
+| Precision | 0.9981 |
+| Recall | 0.9631 |
+| AUC | 0.9989 |
+| Model size | 17 MB |
+| Inference latency | ~17 ms / image (CPU, single-scale) |
 
 ### 3.4 Cost routing in front of expensive models
 
